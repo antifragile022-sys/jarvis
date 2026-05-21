@@ -4,7 +4,7 @@
 **русский язык**, плюс умеет действовать на компьютере как агент через **Google
 Gemini** (с function calling).
 
-> Готовый `.exe` лежит во вкладке [**Releases**](https://github.com/antifragile022-sys/jarvis-ru/releases).
+> Готовый `.exe` лежит во вкладке [**Releases**](https://github.com/antifragile022-sys/jarvis/releases).
 > Просто скачай, запусти — при первом старте откроется окно настроек, куда
 > нужно вписать ключ Gemini.
 
@@ -55,7 +55,7 @@ Gemini** (с function calling).
 
 ## Установка `.exe` (Windows)
 
-1. Скачай `Jarvis.exe` из [Releases](https://github.com/antifragile022-sys/jarvis-ru/releases).
+1. Скачай `Jarvis.exe` из [Releases](https://github.com/antifragile022-sys/jarvis/releases).
 2. Запусти. При первом старте откроется окно настроек:
    - вставь **Gemini API Key** (получить: <https://aistudio.google.com/app/apikey>);
    - нажми «**Проверить ключ**» — Джарвис скажет «OK», если всё в порядке;
@@ -80,7 +80,7 @@ Gemini** (с function calling).
 ## Установка из исходников
 
 ```powershell
-git clone https://github.com/antifragile022-sys/jarvis-ru.git
+git clone https://github.com/antifragile022-sys/jarvis.git
 cd jarvis-ru
 python -m venv .venv
 .venv\Scripts\activate
