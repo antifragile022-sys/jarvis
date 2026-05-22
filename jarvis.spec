@@ -90,7 +90,7 @@ exe = EXE(
         "python312.dll",
     ],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import io
 import sys
+import traceback
 
 
 def _force_utf8_stdio() -> None:
@@ -29,7 +30,41 @@ def _force_utf8_stdio() -> None:
             setattr(sys, name, io.TextIOWrapper(stream.buffer, encoding="utf-8", line_buffering=True))
 
 
+def _show_error_dialog(message: str) -> None:
+    """Показывает Tk-окошко с ошибкой (для windowed .exe — иначе ошибка пропадает)."""
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        messagebox.showerror("Jarvis · Ошибка", message)
+        with contextlib.suppress(Exception):
+            root.destroy()
+    except Exception:
+        pass
+
+
 _force_utf8_stdio()
+
+
+def _excepthook(exc_type, exc_value, exc_tb):
+    text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    # Попробуем дописать в лог-файл (если уже сконфигурирован).
+    with contextlib.suppress(Exception):
+        from jarvis.logger import setup_logging  # late import
+
+        setup_logging().error("Неперехваченная ошибка:\n%s", text)
+    _show_error_dialog(
+        "Что-то пошло не так. Подробности — в %APPDATA%\\Jarvis\\jarvis.log\n\n"
+        + text[-1500:]
+    )
+    sys.exit(1)
+
+
+sys.excepthook = _excepthook
+
 
 from jarvis.__main__ import main  # noqa: E402
 

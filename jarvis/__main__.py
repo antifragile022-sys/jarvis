@@ -98,7 +98,7 @@ def _run_voice(args: argparse.Namespace) -> int:
         return 2
 
     speaker = Speaker(voice=config.tts_voice, rate=config.tts_rate, volume=config.tts_volume)
-    wake = WakeWordDetector(config.wake_words, always_active=args.no_wake)
+    wake = WakeWordDetector(config.wake_words, always_active=getattr(args, "no_wake", False))
     llm = _build_llm(config)
     assistant = Assistant(config=config, speaker=speaker, wake_detector=wake, llm=llm)
 
@@ -115,7 +115,7 @@ def _run_text(args: argparse.Namespace) -> int:
     setup_logging(config.log_level)
 
     speaker = PrintSpeaker()
-    wake = WakeWordDetector(config.wake_words, always_active=not args.with_wake)
+    wake = WakeWordDetector(config.wake_words, always_active=not getattr(args, "with_wake", False))
     llm = _build_llm(config)
     assistant = Assistant(config=config, speaker=speaker, wake_detector=wake, llm=llm)
 
