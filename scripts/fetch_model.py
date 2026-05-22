@@ -8,11 +8,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import shutil
 import sys
 import urllib.request
 import zipfile
 from pathlib import Path
+
+# Windows console (cp1252) — принуждаем UTF-8, иначе print с кириллицей падает.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+    except Exception:
+        pass
 
 MODELS = {
     "small": (
@@ -38,11 +47,11 @@ def main() -> int:
     final_dir = dest_root / name
 
     if final_dir.exists() and any(final_dir.iterdir()):
-        print(f"[fetch_model] Модель уже на месте: {final_dir}")
+        print(f"[fetch_model] model already present: {final_dir}")
         return 0
 
     zip_path = dest_root / f"{name}.zip"
-    print(f"[fetch_model] Скачиваю: {url}")
+    print(f"[fetch_model] downloading: {url}")
 
     def _report(block_num: int, block_size: int, total_size: int) -> None:
         if total_size <= 0:
@@ -55,7 +64,7 @@ def main() -> int:
     urllib.request.urlretrieve(url, zip_path, reporthook=_report)
     sys.stdout.write("\n")
 
-    print(f"[fetch_model] Распаковываю в {dest_root}")
+    print(f"[fetch_model] extracting into {dest_root}")
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(dest_root)
 
@@ -68,10 +77,10 @@ def main() -> int:
     zip_path.unlink(missing_ok=True)
 
     if not final_dir.exists():
-        print("[fetch_model] Не удалось обнаружить распакованную модель.", file=sys.stderr)
+        print("[fetch_model] could not find extracted model directory.", file=sys.stderr)
         return 1
 
-    print(f"[fetch_model] Готово: {final_dir}")
+    print(f"[fetch_model] done: {final_dir}")
     return 0
 
 

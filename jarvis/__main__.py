@@ -10,8 +10,21 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from collections.abc import Iterator
+
+# Принуждаем UTF-8 в консоли Windows, иначе кириллица в print падает (cp1252).
+if sys.stdout and sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+    except Exception:
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+        except Exception:
+            pass
 
 from . import agent_tools
 from .assistant import Assistant

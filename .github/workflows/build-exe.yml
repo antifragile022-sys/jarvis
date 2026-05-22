@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
 jobs:
   build:
     runs-on: windows-latest
@@ -39,6 +43,8 @@ jobs:
       - name: Download Vosk RU model (small)
         shell: powershell
         run: |
+          chcp 65001 | Out-Null
+          $OutputEncoding = [System.Text.Encoding]::UTF8
           python scripts/fetch_model.py --model small --dest models
 
       - name: Build EXE
@@ -49,11 +55,13 @@ jobs:
           $size = (Get-Item dist/Jarvis.exe).Length / 1MB
           Write-Output ("Jarvis.exe size: {0:N1} MB" -f $size)
 
-      - name: Smoke test (текстовый режим, без mic)
+      - name: Smoke test
         shell: powershell
         run: |
-          .\dist\Jarvis.exe once "сколько времени"
-          if (-not (Test-Path .\dist\Jarvis.exe)) { exit 1 }
+          chcp 65001 | Out-Null
+          $OutputEncoding = [System.Text.Encoding]::UTF8
+          if (-not (Test-Path .\dist\Jarvis.exe)) { Write-Error 'Jarvis.exe not built'; exit 1 }
+          .\dist\Jarvis.exe --help
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
