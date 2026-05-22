@@ -1,6 +1,7 @@
 """Точка входа CLI:
-  python -m jarvis              # голосовой режим (по умолчанию)
-  python -m jarvis voice        # то же самое
+  python -m jarvis              # GUI с чатом + микрофон (по умолчанию)
+  python -m jarvis gui          # то же самое
+  python -m jarvis voice        # голосовой режим без окна (только консоль/трей)
   python -m jarvis text         # текстовый режим (без микрофона)
   python -m jarvis once "X"     # выполнить одну команду и выйти
   python -m jarvis settings     # открыть окно настроек
@@ -41,7 +42,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="jarvis", description="Голосовой ассистент Джарвис")
     sub = parser.add_subparsers(dest="cmd")
 
-    p_voice = sub.add_parser("voice", help="Голосовой режим (по умолчанию)")
+    sub.add_parser("gui", help="Главное окно приложения (по умолчанию)")
+
+    p_voice = sub.add_parser("voice", help="Голосовой режим без окна")
     p_voice.add_argument("--no-wake", action="store_true", help="Не требовать wake-word.")
 
     p_text = sub.add_parser("text", help="Текстовый режим — ввод с клавиатуры")
@@ -178,9 +181,31 @@ def _list_devices() -> int:
     return 0
 
 
+def _run_gui(args: argparse.Namespace) -> int:
+    _ensure_first_run_setup()
+    config = load_config()
+    setup_logging(config.log_level)
+    log = get_logger("main")
+
+    recognizer = None
+    try:
+        recognizer = VoskRecognizer(config.vosk_model_path, device=config.mic_device)
+        recognizer._ensure_loaded()  # noqa: SLF001
+    except Exception as exc:
+        log.warning("STT init failed (GUI keeps running w/o mic): %s", exc)
+        recognizer = None
+
+    speaker = Speaker(voice=config.tts_voice, rate=config.tts_rate, volume=config.tts_volume)
+    llm = _build_llm(config)
+
+    from .gui.main_window import run_gui
+
+    return run_gui(config=config, real_speaker=speaker, recognizer=recognizer, llm=llm)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    cmd = args.cmd or "voice"
+    cmd = args.cmd or "gui"
     if cmd == "settings":
         return _open_settings()
     if cmd == "voices":
@@ -191,7 +216,9 @@ def main(argv: list[str] | None = None) -> int:
         return _run_text(args)
     if cmd == "once":
         return _run_once(args)
-    return _run_voice(args)
+    if cmd == "voice":
+        return _run_voice(args)
+    return _run_gui(args)
 
 
 if __name__ == "__main__":

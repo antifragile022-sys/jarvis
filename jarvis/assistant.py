@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import random
 import threading
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 from .config import Config
 from .llm import GeminiClient, QuotaExceeded
@@ -43,8 +43,12 @@ class _Speaker:  # protocol-like
     def speak(self, text: str) -> None: ...
 
 
-def _open_settings_async(reason: str) -> None:
-    """Открывает окно настроек в отдельном потоке (Tk-mainloop блокирует)."""
+def _default_open_settings(reason: str) -> None:
+    """Fallback: открывает окно настроек в отдельном потоке (Tk-mainloop блокирует).
+
+    GUI-режим подменяет этот callback своим (root.after), чтобы не создавать
+    второй Tk root.
+    """
     def _go():
         try:
             from .gui.settings import open_settings_dialog
@@ -63,17 +67,19 @@ class Assistant:
         wake_detector: WakeWordDetector,
         llm: GeminiClient | None = None,
         router: Router | None = None,
+        open_settings: Callable[[str], None] | None = None,
     ) -> None:
         self.config = config
         self.speaker = speaker
         self.wake = wake_detector
         self.llm = llm
         self.router = router or build_default_router(config)
+        self._open_settings: Callable[[str], None] = open_settings or _default_open_settings
 
     def greet(self) -> None:
         if not self.config.gemini_api_key:
             self.speaker.speak("Джарвис на связи. API-ключ не задан — открываю настройки.")
-            _open_settings_async(reason="Введи API-ключ Gemini, чтобы заработала «болталка» и агент-режим.")
+            self._open_settings("Введи API-ключ Gemini, чтобы заработала «болталка» и агент-режим.")
         else:
             mode = "агент" if self.config.agent_mode else "только команды"
             self.speaker.speak(f"Джарвис на связи. Режим: {mode}.")
@@ -85,7 +91,7 @@ class Assistant:
             return self.llm.ask(text)
         except QuotaExceeded:
             self.speaker.speak("Сэр, квота Gemini исчерпана. Открываю настройки — введите другой ключ.")
-            _open_settings_async(reason="Квота API-ключа исчерпана. Введи новый ключ.")
+            self._open_settings("Квота API-ключа исчерпана. Введи новый ключ.")
             return ""
 
     def _handle(self, command: str) -> bool:

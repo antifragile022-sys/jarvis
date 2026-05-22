@@ -65,7 +65,17 @@ def open_settings_dialog(reason: str = "") -> dict[str, Any] | None:
     cur = load_settings()
     result: dict[str, Any] | None = None
 
-    root = tk.Tk()
+    # Если уже есть родительский Tk root (например, главное окно Jarvis) — используем
+    # Toplevel, а не новый Tk(); иначе второй mainloop виснет/падает.
+    parent = tk._get_default_root() if hasattr(tk, "_get_default_root") else None  # type: ignore[attr-defined]
+    standalone = parent is None
+    if standalone:
+        root = tk.Tk()
+    else:
+        root = tk.Toplevel(parent)
+        with contextlib.suppress(Exception):
+            root.transient(parent)
+            root.grab_set()
     root.title("Jarvis · Настройки")
     root.geometry("560x520")
     root.resizable(False, False)
@@ -217,5 +227,8 @@ def open_settings_dialog(reason: str = "") -> dict[str, Any] | None:
 
     main.columnconfigure(1, weight=1)
 
-    root.mainloop()
+    if standalone:
+        root.mainloop()
+    else:
+        root.wait_window()
     return result
