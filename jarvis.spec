@@ -7,6 +7,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 block_cipher = None
 
 hidden = []
+hidden += collect_submodules("jarvis")
 hidden += collect_submodules("vosk")
 hidden += collect_submodules("comtypes")
 hidden += collect_submodules("pycaw")
@@ -53,7 +54,7 @@ excludes = [
 ]
 
 a = Analysis(
-    ["jarvis/__main__.py"],
+    ["run_jarvis.py"],
     pathex=["."],
     binaries=[],
     datas=datas,
