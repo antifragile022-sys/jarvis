@@ -105,21 +105,37 @@ class Assistant:
             self.speaker.speak("Завершаю работу. До связи, сэр.")
             return False
 
-        # 1) Локальный роутер — никаких API-вызовов.
+        agent_mode_with_llm = (
+            self.config.agent_mode and self.llm is not None and self.llm.available
+        )
+
+        # В агент-режиме Gemini — «мозг»: ему уходит ВСЁ. Локальный роутер только
+        # как запасной (нет ключа, нет интернета, кончилась квота).
+        if agent_mode_with_llm:
+            answer = self._ask_llm(command)
+            if answer:
+                self.speaker.speak(answer)
+                return True
+            # LLM не ответил — пробуем локальный роутер как fallback.
+            response = self.router.dispatch(text)
+            if response is not None:
+                if response:
+                    self.speaker.speak(response)
+                return True
+            self.speaker.speak(random.choice(NOT_UNDERSTOOD))
+            return True
+
+        # Без агент-режима (или без ключа): сначала локальный роутер, потом LLM.
         response = self.router.dispatch(text)
         if response is not None:
             if response:
                 self.speaker.speak(response)
             return True
-
-        # 2) Команды не подошло — Gemini (если ключ есть).
         if self.llm and self.llm.available:
             answer = self._ask_llm(command)
             if answer:
                 self.speaker.speak(answer)
                 return True
-
-        # 3) LLM недоступен или ничего не вернул.
         self.speaker.speak(random.choice(NOT_UNDERSTOOD))
         return True
 

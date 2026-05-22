@@ -438,25 +438,446 @@ def cancel_shutdown() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# УПРАВЛЕНИЕ ОКНАМИ (Windows: ctypes user32; на других ОС — best effort)
+# ---------------------------------------------------------------------------
+
+
+def _is_windows() -> bool:
+    return platform.system().lower() == "windows"
+
+
+def _enum_windows() -> list[dict[str, Any]]:
+    """Возвращает список видимых окон Windows: [{hwnd, title, pid}]."""
+    if not _is_windows():
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return []
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    EnumWindows = user32.EnumWindows
+    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    GetWindowText = user32.GetWindowTextW
+    GetWindowTextLength = user32.GetWindowTextLengthW
+    IsWindowVisible = user32.IsWindowVisible
+    GetWindowThreadProcessId = user32.GetWindowThreadProcessId
+
+    windows: list[dict[str, Any]] = []
+
+    def _cb(hwnd, _lparam):  # type: ignore[no-untyped-def]
+        if not IsWindowVisible(hwnd):
+            return True
+        length = GetWindowTextLength(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        GetWindowText(hwnd, buf, length + 1)
+        title = buf.value.strip()
+        if not title:
+            return True
+        pid = wintypes.DWORD()
+        GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        windows.append({"hwnd": int(hwnd), "title": title, "pid": int(pid.value)})
+        return True
+
+    EnumWindows(EnumWindowsProc(_cb), 0)
+    return windows
+
+
+def _find_window_hwnd(title_substr: str | None) -> int | None:
+    """Возвращает hwnd подходящего окна. None = активное окно."""
+    if not _is_windows():
+        return None
+    import ctypes
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    if not title_substr:
+        hwnd = int(user32.GetForegroundWindow())
+        return hwnd or None
+    needle = title_substr.strip().lower()
+    for w in _enum_windows():
+        if needle in w["title"].lower():
+            return int(w["hwnd"])
+    return None
+
+
+def list_windows() -> dict:
+    """Возвращает список открытых окон с заголовками и PID."""
+    if not _is_windows():
+        return {"ok": False, "error": "Только Windows"}
+    wins = _enum_windows()
+    return {"ok": True, "count": len(wins), "windows": wins[:50]}
+
+
+def _show_window(title_substr: str | None, cmd: int, action: str) -> dict:
+    if not _is_windows():
+        return {"ok": False, "error": "Только Windows"}
+    hwnd = _find_window_hwnd(title_substr)
+    if not hwnd:
+        return {"ok": False, "error": f"окно не найдено: {title_substr or 'активное'}"}
+    try:
+        import ctypes
+
+        ctypes.windll.user32.ShowWindow(hwnd, cmd)  # type: ignore[attr-defined]
+        return {"ok": True, "action": action, "hwnd": hwnd}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def minimize_window(title_substr: str | None = None) -> dict:
+    """Сворачивает окно по подстроке заголовка. Без аргумента — активное.
+
+    Args:
+        title_substr: часть заголовка окна (например, «chrome», «блокнот»).
+    """
+    return _show_window(title_substr, 6, "minimize")  # SW_MINIMIZE = 6
+
+
+def maximize_window(title_substr: str | None = None) -> dict:
+    """Разворачивает окно на весь экран. Без аргумента — активное.
+
+    Args:
+        title_substr: часть заголовка окна.
+    """
+    return _show_window(title_substr, 3, "maximize")  # SW_MAXIMIZE = 3
+
+
+def restore_window(title_substr: str | None = None) -> dict:
+    """Восстанавливает окно (из свёрнутого/развёрнутого в нормальное).
+
+    Args:
+        title_substr: часть заголовка окна.
+    """
+    return _show_window(title_substr, 9, "restore")  # SW_RESTORE = 9
+
+
+def focus_window(title_substr: str) -> dict:
+    """Переключает фокус на окно по подстроке заголовка.
+
+    Args:
+        title_substr: часть заголовка окна (например, «vs code», «youtube»).
+    """
+    if not _is_windows():
+        return {"ok": False, "error": "Только Windows"}
+    hwnd = _find_window_hwnd(title_substr)
+    if not hwnd:
+        return {"ok": False, "error": f"окно не найдено: {title_substr}"}
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        # Если окно свёрнуто, сначала восстановим.
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        return {"ok": True, "hwnd": hwnd}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def close_window(title_substr: str | None = None) -> dict:
+    """Закрывает окно через WM_CLOSE (приложение само отработает диалоги сохранения).
+
+    Args:
+        title_substr: часть заголовка окна. Без аргумента — активное.
+    """
+    if not _is_windows():
+        return {"ok": False, "error": "Только Windows"}
+    hwnd = _find_window_hwnd(title_substr)
+    if not hwnd:
+        return {"ok": False, "error": f"окно не найдено: {title_substr or 'активное'}"}
+    if not _confirm("close_window", f"hwnd={hwnd}, title~{title_substr or 'активное'}"):
+        return {"ok": False, "error": "Отказано пользователем"}
+    try:
+        import ctypes
+
+        WM_CLOSE = 0x0010
+        ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)  # type: ignore[attr-defined]
+        return {"ok": True, "hwnd": hwnd}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def minimize_all() -> dict:
+    """Сворачивает все окна (эквивалент Win+D — показать рабочий стол)."""
+    if not _is_windows():
+        return {"ok": False, "error": "Только Windows"}
+    try:
+        import pyautogui  # type: ignore
+
+        pyautogui.hotkey("win", "d")
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def get_active_window() -> dict:
+    """Возвращает заголовок и PID активного окна."""
+    if not _is_windows():
+        return {"ok": False, "error": "Только Windows"}
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        hwnd = int(user32.GetForegroundWindow())
+        if not hwnd:
+            return {"ok": False, "error": "нет активного окна"}
+        length = user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return {"ok": True, "hwnd": hwnd, "title": buf.value, "pid": int(pid.value)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# МЫШЬ
+# ---------------------------------------------------------------------------
+
+
+def move_cursor(x: int, y: int, duration: float = 0.2) -> dict:
+    """Плавно перемещает курсор в точку (x, y) на экране.
+
+    Args:
+        x: координата X в пикселях.
+        y: координата Y в пикселях.
+        duration: продолжительность движения в секундах.
+    """
+    try:
+        import pyautogui  # type: ignore
+
+        pyautogui.moveTo(x, y, duration=max(0.0, duration))
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def click_at(x: int | None = None, y: int | None = None, button: str = "left", clicks: int = 1) -> dict:
+    """Кликает в точку. Без координат — в текущей позиции курсора.
+
+    Args:
+        x: координата X (опционально).
+        y: координата Y (опционально).
+        button: 'left' | 'right' | 'middle'.
+        clicks: количество кликов (1 для одиночного, 2 для двойного).
+    """
+    try:
+        import pyautogui  # type: ignore
+
+        kwargs: dict[str, Any] = {"button": button, "clicks": max(1, clicks)}
+        if x is not None and y is not None:
+            kwargs["x"] = x
+            kwargs["y"] = y
+        pyautogui.click(**kwargs)
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def scroll(amount: int) -> dict:
+    """Прокручивает колесо мыши. Положительное число — вверх, отрицательное — вниз.
+
+    Args:
+        amount: количество «щелчков» колеса (например, 5 или -10).
+    """
+    try:
+        import pyautogui  # type: ignore
+
+        pyautogui.scroll(amount)
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def get_screen_size() -> dict:
+    """Возвращает разрешение экрана (width, height)."""
+    try:
+        import pyautogui  # type: ignore
+
+        w, h = pyautogui.size()
+        return {"ok": True, "width": int(w), "height": int(h)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# БУФЕР ОБМЕНА
+# ---------------------------------------------------------------------------
+
+
+def copy_to_clipboard(text: str) -> dict:
+    """Копирует текст в системный буфер обмена.
+
+    Args:
+        text: текст для копирования.
+    """
+    if _is_windows():
+        try:
+            proc = subprocess.run(["clip"], input=text, text=True, timeout=5, check=False)
+            return {"ok": proc.returncode == 0, "chars": len(text)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+    # Unix fallback
+    for cmd in (["xclip", "-selection", "clipboard"], ["wl-copy"], ["pbcopy"]):
+        if shutil.which(cmd[0]):
+            try:
+                subprocess.run(cmd, input=text, text=True, timeout=5, check=False)
+                return {"ok": True, "chars": len(text)}
+            except Exception:
+                continue
+    return {"ok": False, "error": "буфер обмена недоступен"}
+
+
+def read_clipboard() -> dict:
+    """Читает текст из буфера обмена."""
+    if _is_windows():
+        try:
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return {"ok": True, "text": proc.stdout.rstrip("\r\n")}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+    for cmd in (["xclip", "-selection", "clipboard", "-o"], ["wl-paste"], ["pbpaste"]):
+        if shutil.which(cmd[0]):
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                return {"ok": True, "text": proc.stdout}
+            except Exception:
+                continue
+    return {"ok": False, "error": "буфер обмена недоступен"}
+
+
+# ---------------------------------------------------------------------------
+# УВЕДОМЛЕНИЯ
+# ---------------------------------------------------------------------------
+
+
+def show_notification(title: str, message: str = "") -> dict:
+    """Показывает всплывающее уведомление Windows в системном трее.
+
+    Args:
+        title: заголовок уведомления.
+        message: текст уведомления.
+    """
+    if _is_windows():
+        try:
+            ps = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "$n = New-Object System.Windows.Forms.NotifyIcon; "
+                "$n.Icon = [System.Drawing.SystemIcons]::Information; "
+                "$n.Visible = $true; "
+                f"$n.ShowBalloonTip(5000, {repr(title)}, {repr(message)}, "
+                "[System.Windows.Forms.ToolTipIcon]::Info); "
+                "Start-Sleep -Seconds 5; $n.Dispose()"
+            )
+            subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps])
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+    return {"ok": False, "error": "Уведомления реализованы только под Windows"}
+
+
+# ---------------------------------------------------------------------------
+# WEB FETCH
+# ---------------------------------------------------------------------------
+
+
+def fetch_url(url: str, max_chars: int = 4000) -> dict:
+    """Загружает страницу по URL и возвращает её текст (без HTML-тегов).
+
+    Args:
+        url: полный URL (https://...).
+        max_chars: максимум символов в возвращаемом тексте.
+    """
+    try:
+        import re
+
+        import requests  # type: ignore
+
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 Jarvis"})
+        resp.raise_for_status()
+        html = resp.text
+        # Грубо вырезаем теги/скрипты.
+        text = re.sub(r"<script.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<style.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return {"ok": True, "url": url, "title": "", "text": text[:max_chars]}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# ОЖИДАНИЕ
+# ---------------------------------------------------------------------------
+
+
+def sleep(seconds: float) -> dict:
+    """Ждёт указанное число секунд (полезно между действиями GUI).
+
+    Args:
+        seconds: сколько ждать (максимум 30).
+    """
+    import time
+
+    secs = max(0.0, min(30.0, float(seconds)))
+    time.sleep(secs)
+    return {"ok": True, "waited": secs}
+
+
+# ---------------------------------------------------------------------------
 # Список инструментов, передаваемый в Gemini
 # ---------------------------------------------------------------------------
 
 ALL_TOOLS = [
+    # Запуск приложений и сайтов
     open_app,
     open_url,
     search_web,
+    fetch_url,
+    # Звук / яркость / экран
     set_volume,
     set_mute,
     set_brightness,
     take_screenshot,
+    # Окна
+    list_windows,
+    get_active_window,
+    focus_window,
+    minimize_window,
+    maximize_window,
+    restore_window,
+    close_window,
+    minimize_all,
+    # Клавиатура / мышь
+    type_text,
+    press_keys,
+    click_at,
+    move_cursor,
+    scroll,
+    get_screen_size,
+    # Буфер обмена
+    copy_to_clipboard,
+    read_clipboard,
+    # Файлы / shell / python
     system_info,
     read_file,
     list_dir,
     write_file,
     run_shell,
     run_python,
-    type_text,
-    press_keys,
+    # Уведомления, ожидание
+    show_notification,
+    sleep,
+    # Питание
     lock_workstation,
     shutdown_pc,
     cancel_shutdown,

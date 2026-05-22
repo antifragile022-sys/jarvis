@@ -10,11 +10,21 @@ from collections.abc import Callable, Iterator
 from tkinter import scrolledtext, ttk
 from typing import Any
 
-from ..assistant import EXIT_PHRASES, GREETINGS, NOT_UNDERSTOOD, Assistant
+from ..assistant import EXIT_PHRASES, GREETINGS, Assistant
 from ..config import Config
-from ..llm import GeminiClient, QuotaExceeded
+from ..llm import GeminiClient
 from ..logger import get_logger
 from ..wakeword import WakeWordDetector
+
+# Короткие голосовые «подтверждения» перед тем как уйти в Gemini —
+# чтобы пользователь слышал отклик сразу, а не молчание.
+_ACKS = [
+    "Принял, сэр.",
+    "Понял, сэр.",
+    "Секунду, сэр.",
+    "Минутку.",
+    "Работаю.",
+]
 
 log = get_logger("gui.main")
 
@@ -281,7 +291,12 @@ class MainWindow:
     # ----- Dispatch / STT -------------------------------------------------
 
     def _dispatch_command(self, text: str) -> None:
-        """Один обработанный голос/текст. Запускается в worker-потоке."""
+        """Один обработанный голос/текст. Запускается в worker-потоке.
+
+        Делегирует роутинг (LLM-first vs локальный) в Assistant._handle(),
+        чтобы логика была в одном месте. Перед уходом в Gemini проговаривает
+        короткое подтверждение, чтобы пользователь слышал отклик сразу.
+        """
         norm = text.strip().lower()
         if not norm:
             return
@@ -291,25 +306,19 @@ class MainWindow:
             return
 
         self._safe_after(("status", _STATUS_THINK))
+
+        # Голосовая «квитанция» — звучит, пока Gemini думает.
+        agent_with_llm = (
+            self.config.agent_mode and self.llm is not None and self.llm.available
+        )
+        if agent_with_llm:
+            self._gui_speaker.speak(random.choice(_ACKS))
+
         try:
-            response = self.assistant.router.dispatch(norm)
-            if response is not None:
-                if response:
-                    self._gui_speaker.speak(response)
-                return
-            if self.llm and self.llm.available:
-                try:
-                    answer = self.llm.ask(text)
-                except QuotaExceeded:
-                    self._gui_speaker.speak(
-                        "Квота Gemini исчерпана. Открываю настройки — введи другой ключ."
-                    )
-                    self._open_settings()
-                    return
-                if answer:
-                    self._gui_speaker.speak(answer)
-                    return
-            self._gui_speaker.speak(random.choice(NOT_UNDERSTOOD))
+            self.assistant._handle(text)  # noqa: SLF001
+        except Exception as exc:  # pragma: no cover
+            log.error("dispatch failed: %s", exc)
+            self._safe_after(("error", f"Ошибка: {exc}"))
         finally:
             self._safe_after(("status", self._idle_status()))
 
